@@ -139,7 +139,7 @@ def count_obs(df):
         return {k: v for k, v in s.items()}
 
 
-def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_model_index=None, model_form='linear'):
+def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_model_index=None, model_form='linear', min_max_adjustment=False):
 
     # linear model: y = X[0]*beta[0] + ... + X[10]*beta[10] + tau
     # log-log model: log1(y) = log1(X[0])*beta[0] + ... + log1(X[10])*beta[10] + tau
@@ -216,17 +216,36 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
         predicted_control_contributions = np.array([0] * total_obs)
         for var in unadjusted_control_contributions.keys():
             predicted_control_contributions = predicted_control_contributions + unadjusted_control_contributions[var]
+
+        # Intercept
         model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'] = np.array([0] * total_obs)
+        for cross_section in cross_sections:
+            start = cross_sections_summary[cross_section]['start']
+            end = cross_sections_summary[cross_section]['end']
+            model_contributions['model_contributions']['baseline'][cross_section]['intercept'] = (intercept_con[start:end + 1] - 1) * y_mean[cross_section]
+            model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = (intercept_con[start:end + 1] - 1) * y_mean[cross_section]
+
+        # Control / Competitive
         for var in unadjusted_control_contributions.keys():
             model_contributions['model_contributions']['baseline']['[TOTAL]'][var] = np.array([0] * total_obs)
             for cross_section in cross_sections:
                 start = cross_sections_summary[cross_section]['start']
                 end = cross_sections_summary[cross_section]['end']
                 adjusted_var_con = unadjusted_control_contributions[var][start:end+1] * actual_control_contributions[start:end+1] / predicted_control_contributions[start:end+1] * y_mean[cross_section]
-                model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
-                model_contributions['model_contributions']['baseline']['[TOTAL]'][var][start:end + 1] = adjusted_var_con
-                model_contributions['model_contributions']['baseline'][cross_section]['intercept'] = (intercept_con[start:end+1] - 1) * y_mean[cross_section]
-                model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = (intercept_con[start:end+1] - 1) * y_mean[cross_section]
+                if min_max_adjustment and var not in comp_media_vars:
+                    if sum(adjusted_var_con) > 0:  # Min Adjustment
+                        adjustment_amount = min(adjusted_var_con)
+                        adjusted_var_con = adjusted_var_con - adjustment_amount
+                    else:  # Max Adjustment
+                        adjustment_amount = max(adjusted_var_con)
+                        adjusted_var_con = adjusted_var_con - adjustment_amount
+                    model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
+                    model_contributions['model_contributions']['baseline']['[TOTAL]'][var][start:end + 1] = adjusted_var_con
+                    model_contributions['model_contributions']['baseline'][cross_section]['intercept'] = model_contributions['model_contributions']['baseline'][cross_section]['intercept'] + adjustment_amount
+                    model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] + adjustment_amount
+                else:
+                    model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
+                    model_contributions['model_contributions']['baseline']['[TOTAL]'][var][start:end + 1] = adjusted_var_con
 
         # Media
         predicted_y_norm = baseline.copy()
@@ -271,8 +290,21 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
                     for cross_section in cross_sections:
                         start = cross_sections_summary[cross_section]['start']
                         end = cross_sections_summary[cross_section]['end']
-                        model_contributions['model_contributions']['baseline'][cross_section][var] = var_con[start:end+1] * y_mean[cross_section]
-                        model_contributions['model_contributions']['baseline']['[TOTAL]'][var] += list(model_contributions['model_contributions']['baseline'][cross_section][var])
+                        adjusted_var_con = var_con[start:end+1] * y_mean[cross_section]
+                        if min_max_adjustment and var not in comp_media_vars:
+                            if sum(adjusted_var_con) > 0:  # Min Adjustment
+                                adjustment_amount = min(adjusted_var_con)
+                                adjusted_var_con = adjusted_var_con - adjustment_amount
+                            else:  # Max Adjustment
+                                adjustment_amount = max(adjusted_var_con)
+                                adjusted_var_con = adjusted_var_con - adjustment_amount
+                            model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
+                            model_contributions['model_contributions']['baseline']['[TOTAL]'][var] += list(model_contributions['model_contributions']['baseline'][cross_section][var])
+                            model_contributions['model_contributions']['baseline'][cross_section]['intercept'] = model_contributions['model_contributions']['baseline'][cross_section]['intercept'] + adjustment_amount
+                            model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] + adjustment_amount
+                        else:
+                            model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
+                            model_contributions['model_contributions']['baseline']['[TOTAL]'][var] += list(model_contributions['model_contributions']['baseline'][cross_section][var])
                     model_contributions['model_contributions']['baseline']['[TOTAL]'][var] = np.array(model_contributions['model_contributions']['baseline']['[TOTAL]'][var])
 
         # Media
@@ -296,7 +328,7 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
     return model_contributions
 
 
-def simulate_mmm_model_prediction(mmm_model_output, df_model, df_media_spend=None, model_form='linear', num_sample=None):
+def simulate_mmm_model_prediction(mmm_model_output, df_model, df_media_spend=None, model_form='linear', num_sample=None, min_max_adjustment=False):
 
     dep_var, media_vars, comp_media_vars, positive_vars, neutral_vars, negative_vars = mmm_model_output['dep_var'], mmm_model_output['media_vars'], mmm_model_output['comp_media_vars'], mmm_model_output['positive_vars'], mmm_model_output['neutral_vars'], mmm_model_output['negative_vars']
     x_media, x_comp_media, x_control_positive, x_control_neutral, x_control_negative = subset_df(df_model, media_vars), subset_df(df_model, comp_media_vars), subset_df(df_model, positive_vars), subset_df(df_model, neutral_vars), subset_df(df_model, negative_vars)
@@ -367,7 +399,7 @@ def simulate_mmm_model_prediction(mmm_model_output, df_model, df_media_spend=Non
         simulated_results['ModelStats']['[TOTAL]']['Predicted Y'].append(sum(predicted_y))
 
         # Contributions
-        model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=i, model_form=model_form)
+        model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=i, model_form=model_form, min_max_adjustment=min_max_adjustment)
         summary_spend = {cross_section: {} for cross_section in cross_sections_total}
         share_of_spend = {cross_section: {} for cross_section in cross_sections_total}
         summary_contributions = {cross_section: {} for cross_section in cross_sections_total}
@@ -534,7 +566,7 @@ def apply_mean_log(df, cols):
 # -----------------------------------------------------------------------------------------
 # MODEL OUTPUTS
 # -----------------------------------------------------------------------------------------
-def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None, selected_model_index=None, model_form='linear'):
+def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None, selected_model_index=None, model_form='linear', min_max_adjustment=True):
 
     dep_var, media_vars, comp_media_vars, positive_vars, neutral_vars, negative_vars = mmm_model_output['dep_var'], mmm_model_output['media_vars'], mmm_model_output['comp_media_vars'], mmm_model_output['positive_vars'], mmm_model_output['neutral_vars'], mmm_model_output['negative_vars']
     x_media, x_comp_media, x_control_positive, x_control_neutral, x_control_negative = subset_df(df_model, media_vars), subset_df(df_model, comp_media_vars), subset_df(df_model, positive_vars), subset_df(df_model, neutral_vars), subset_df(df_model, negative_vars)
@@ -566,7 +598,7 @@ def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None
     y_norm = df_model[dep_var]
 
     # Compute each media / control variables
-    model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=selected_model_index, model_form=model_form)
+    model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=selected_model_index, model_form=model_form, min_max_adjustment=min_max_adjustment)
     df_contributions = pd.DataFrame(columns=media_vars + comp_media_vars + positive_vars + neutral_vars + negative_vars + ['intercept'], index=df_model.index)
     df_lifetime_contributions = pd.DataFrame(columns=media_vars + positive_vars + neutral_vars + negative_vars + ['intercept'], index=df_model.index)
     for var in media_vars:
@@ -628,10 +660,10 @@ def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None
     return df_contributions, df_lifetime_contributions, df_model_specifications
 
 
-def calc_model_decomposition(df, df_model, mmm_model_output, df_media_spend=None, selected_model_index=None, model_form='linear', num_weeks=52):
+def calc_model_decomposition(df, df_model, mmm_model_output, df_media_spend=None, selected_model_index=None, model_form='linear', min_max_adjustment=True, num_weeks=52):
 
     dep_var, media_vars, positive_vars, neutral_vars, negative_vars = mmm_model_output['dep_var'], mmm_model_output['media_vars'], mmm_model_output['positive_vars'], mmm_model_output['neutral_vars'], mmm_model_output['negative_vars']
-    model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=selected_model_index, model_form=model_form)
+    model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=selected_model_index, model_form=model_form, min_max_adjustment=min_max_adjustment)
     cross_sections_summary = count_obs(df_model)
     cross_sections = list(cross_sections_summary.keys())
     cross_sections_total = cross_sections + ['[TOTAL]']
