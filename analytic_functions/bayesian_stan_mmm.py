@@ -634,9 +634,9 @@ def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None
         for item in [{'vars': media_vars, 'coeff': beta}, {'vars': comp_media_vars, 'coeff': beta_comp}, {'vars': positive_vars, 'coeff': beta1}, {'vars': neutral_vars, 'coeff': beta2}, {'vars': negative_vars, 'coeff': beta3}, {'vars': ['intercept'], 'coeff': tau}]:
             for i, var in enumerate(item['vars']):
                 if var in media_vars:
-                    coeff = sum(model_contributions['model_contributions']['media_vars'][cross_section][var]) / sum(x_media_adstocked[var])
+                    coeff = sum(model_contributions['model_contributions']['media_vars'][cross_section][var]) / sum(x_media_adstocked[start:end+1][var])
                 elif var in comp_media_vars:
-                    coeff = sum(model_contributions['model_contributions']['baseline'][cross_section][var]) / sum(x_comp_media_adstocked[var])
+                    coeff = sum(model_contributions['model_contributions']['baseline'][cross_section][var]) / sum(x_comp_media_adstocked[start:end+1][var])
                 elif var == 'intercept':
                     coeff = sum(model_contributions['model_contributions']['baseline'][cross_section][var]) / len(model_contributions['model_contributions']['baseline'][cross_section][var])
                 else:
