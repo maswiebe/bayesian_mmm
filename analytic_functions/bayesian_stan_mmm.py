@@ -129,14 +129,14 @@ def predict_mmm_model(mmm_model_output, df_model, model_form='linear'):
 
 
 def count_obs(df):
-    if len(df.index[0]) == 1:
-        return {'ALL': {'nobs': len(df), 'start': 0, 'end': len(df)}}
-    else:
+    if type(df.index[0]) in [tuple, list] and len(df.index[0]) > 1:  # Panel Data
         temp_df = df.copy()
         temp_df['CrossSection'] = [i[0] for i in temp_df.index]
         temp_df['RowIndex'] = [i for i in range(len(temp_df))]
         s = temp_df.groupby('CrossSection').apply(lambda x: {'nobs': len(x), 'start': min(x['RowIndex']), 'end': max(x['RowIndex'])})
         return {k: v for k, v in s.items()}
+    else:  # Time Series
+        return {'[TOTAL]': {'nobs': len(df), 'start': 0, 'end': len(df)}}
 
 
 def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_model_index=None, model_form='linear', min_max_adjustment=False):
@@ -156,7 +156,7 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
     y_norm = y_norm + 1
     cross_sections_summary = count_obs(df_model)
     cross_sections = list(cross_sections_summary.keys())
-    cross_sections_total = cross_sections + ['[TOTAL]']
+    cross_sections_total = cross_sections + ['[TOTAL]'] if '[TOTAL]' not in cross_sections else cross_sections
 
     has_spend_data = True if df_media_spend is not None and len(df_media_spend) > 0 else False
 
@@ -180,7 +180,7 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
     }
 
     # Spend
-    model_contributions['spend']['media_vars'] = {cross_section: {} for cross_section in cross_sections + ['[TOTAL]']}
+    model_contributions['spend']['media_vars'] = {cross_section: {} for cross_section in cross_sections_total}
     for cross_section in cross_sections:
         model_contributions['spend']['media_vars'][cross_section] = {}
         nobs = cross_sections_summary[cross_section]['nobs']
@@ -191,9 +191,9 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
     model_contributions['spend']['media_vars']['[TOTAL]'] = {shorten_name(var): df_media_spend[shorten_name(var)].values if has_spend_data and shorten_name(var) in df_media_spend.columns else [0] * total_obs for var in media_vars}
 
     # Decomposition
-    model_contributions['model_contributions']['baseline'] = {cross_section: {} for cross_section in cross_sections + ['[TOTAL]']}
-    model_contributions['model_contributions']['media_vars'] = {cross_section: {} for cross_section in cross_sections + ['[TOTAL]']}
-    model_contributions['lifetime_contributions']['media_vars'] = {cross_section: {} for cross_section in cross_sections + ['[TOTAL]']}
+    model_contributions['model_contributions']['baseline'] = {cross_section: {} for cross_section in cross_sections_total}
+    model_contributions['model_contributions']['media_vars'] = {cross_section: {} for cross_section in cross_sections_total}
+    model_contributions['lifetime_contributions']['media_vars'] = {cross_section: {} for cross_section in cross_sections_total}
     if model_form.lower() == 'log-log':
         var_factors = {}
         unadjusted_control_contributions = {}
@@ -242,7 +242,7 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
                     model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
                     model_contributions['model_contributions']['baseline']['[TOTAL]'][var][start:end + 1] = adjusted_var_con
                     model_contributions['model_contributions']['baseline'][cross_section]['intercept'] = model_contributions['model_contributions']['baseline'][cross_section]['intercept'] + adjustment_amount
-                    model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] + adjustment_amount
+                    model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = model_contributions['model_contributions']['baseline'][cross_section]['intercept']
                 else:
                     model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
                     model_contributions['model_contributions']['baseline']['[TOTAL]'][var][start:end + 1] = adjusted_var_con
@@ -279,7 +279,7 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
         model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'] = []
         for cross_section in cross_sections:
             model_contributions['model_contributions']['baseline'][cross_section]['intercept'] = np.array([tau * y_mean[cross_section]] * cross_sections_summary[cross_section]['nobs'])
-            model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'] += list(model_contributions['model_contributions']['baseline'][cross_section]['intercept'])
+        model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'] = [v for cross_section in cross_sections for v in model_contributions['model_contributions']['baseline'][cross_section]['intercept']]
         model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'] = np.array(model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'])
 
         for item in [{'vars': comp_media_vars, 'coeff': beta_comp, 'data': x_comp_media_transformed}, {'vars': positive_vars, 'coeff': beta1, 'data': x_control_positive}, {'vars': neutral_vars, 'coeff': beta2, 'data': x_control_neutral}, {'vars': negative_vars, 'coeff': beta3, 'data': x_control_negative}]:
@@ -299,12 +299,11 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
                                 adjustment_amount = max(adjusted_var_con)
                                 adjusted_var_con = adjusted_var_con - adjustment_amount
                             model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
-                            model_contributions['model_contributions']['baseline']['[TOTAL]'][var] += list(model_contributions['model_contributions']['baseline'][cross_section][var])
                             model_contributions['model_contributions']['baseline'][cross_section]['intercept'] = model_contributions['model_contributions']['baseline'][cross_section]['intercept'] + adjustment_amount
-                            model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] + adjustment_amount
+                            model_contributions['model_contributions']['baseline']['[TOTAL]']['intercept'][start:end + 1] = model_contributions['model_contributions']['baseline'][cross_section]['intercept']
                         else:
                             model_contributions['model_contributions']['baseline'][cross_section][var] = adjusted_var_con
-                            model_contributions['model_contributions']['baseline']['[TOTAL]'][var] += list(model_contributions['model_contributions']['baseline'][cross_section][var])
+                    model_contributions['model_contributions']['baseline']['[TOTAL]'][var] = [v for cross_section in cross_sections for v in model_contributions['model_contributions']['baseline'][cross_section][var]]
                     model_contributions['model_contributions']['baseline']['[TOTAL]'][var] = np.array(model_contributions['model_contributions']['baseline']['[TOTAL]'][var])
 
         # Media
@@ -320,9 +319,9 @@ def decompose_model(mmm_model_output, df_model, df_media_spend=None, selected_mo
                 life_time_var_con = life_time_con[start:end+1] / x_media_avg[var][cross_section] * y_mean[cross_section]
                 model_contributions['model_contributions']['media_vars'][cross_section][var] = model_var_con
                 model_contributions['lifetime_contributions']['media_vars'][cross_section][var] = life_time_var_con
-                model_contributions['model_contributions']['media_vars']['[TOTAL]'][var] += list(model_contributions['model_contributions']['media_vars'][cross_section][var])
-                model_contributions['lifetime_contributions']['media_vars']['[TOTAL]'][var] += list(model_contributions['lifetime_contributions']['media_vars'][cross_section][var])
+            model_contributions['model_contributions']['media_vars']['[TOTAL]'][var] = [v for cross_section in cross_sections for v in model_contributions['model_contributions']['media_vars'][cross_section][var]]
             model_contributions['model_contributions']['media_vars']['[TOTAL]'][var] = np.array(model_contributions['model_contributions']['media_vars']['[TOTAL]'][var])
+            model_contributions['lifetime_contributions']['media_vars']['[TOTAL]'][var] = [v for cross_section in cross_sections for v in model_contributions['lifetime_contributions']['media_vars'][cross_section][var]]
             model_contributions['lifetime_contributions']['media_vars']['[TOTAL]'][var] = np.array(model_contributions['lifetime_contributions']['media_vars']['[TOTAL]'][var])
 
     return model_contributions
@@ -338,7 +337,7 @@ def simulate_mmm_model_prediction(mmm_model_output, df_model, df_media_spend=Non
     y_mean = y_mean[dep_var_raw_col]
     cross_sections_summary = count_obs(df_model)
     cross_sections = list(cross_sections_summary.keys())
-    cross_sections_total = cross_sections + ['[TOTAL]']
+    cross_sections_total = cross_sections + ['[TOTAL]'] if '[TOTAL]' not in cross_sections else cross_sections
     has_spend_data = True if df_media_spend is not None and len(df_media_spend) > 0 else False
 
     simulated_results = {
@@ -394,9 +393,10 @@ def simulate_mmm_model_prediction(mmm_model_output, df_model, df_media_spend=Non
             simulated_results['ModelStats'][cross_section]['R2'].append(calc_r2(true_y[start:end+1], predicted_y[start:end+1]))
             cross_section_predicted_y = sum(predicted_y[start:end+1])  # * y_mean[cross_section]
             simulated_results['ModelStats'][cross_section]['Predicted Y'].append(cross_section_predicted_y)
-        simulated_results['ModelStats']['[TOTAL]']['MAPE'].append(calc_mape(true_y, predicted_y))
-        simulated_results['ModelStats']['[TOTAL]']['R2'].append(calc_r2(true_y, predicted_y))
-        simulated_results['ModelStats']['[TOTAL]']['Predicted Y'].append(sum(predicted_y))
+        if '[TOTAL]' not in cross_sections:
+            simulated_results['ModelStats']['[TOTAL]']['MAPE'].append(calc_mape(true_y, predicted_y))
+            simulated_results['ModelStats']['[TOTAL]']['R2'].append(calc_r2(true_y, predicted_y))
+            simulated_results['ModelStats']['[TOTAL]']['Predicted Y'].append(sum(predicted_y))
 
         # Contributions
         model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=i, model_form=model_form, min_max_adjustment=min_max_adjustment)
@@ -424,7 +424,7 @@ def simulate_mmm_model_prediction(mmm_model_output, df_model, df_media_spend=Non
             share_of_contributions[cross_section] = {shorten_name(var): summary_contributions[cross_section][shorten_name(var)] / total_contribution for var in media_vars}
             sos_soc = math.sqrt(sum([(share_of_contributions[cross_section][shorten_name(var)] - share_of_spend[cross_section][shorten_name(var)]) ** 2 for var in media_vars]) / len(media_vars) * 100)
             simulated_results['ModelStats'][cross_section]['SOSSOC'].append(sos_soc)
-            simulated_results['ModelStats'][cross_section]['MAPE_SOSSOC'].append(math.sqrt(sos_soc ** 2 + calc_mape(true_y, predicted_y) ** 2))
+            # simulated_results['ModelStats'][cross_section]['MAPE_SOSSOC'].append(math.sqrt(sos_soc ** 2 + calc_mape(true_y, predicted_y) ** 2))
 
         # Response Curves
         if has_spend_data:
@@ -432,17 +432,24 @@ def simulate_mmm_model_prediction(mmm_model_output, df_model, df_media_spend=Non
                 start = cross_sections_summary[cross_section]['start']
                 end = cross_sections_summary[cross_section]['end']
                 for v, var in enumerate(media_vars):
-                    cpm = summary_spend[cross_section][shorten_name(var)] / sum(x_media[var][start:end+1]) * 1000
+                    cpm = summary_spend[cross_section][shorten_name(var)] / sum(x_media[var][start:end+1]) * 1000 if sum(x_media[var][start:end+1]) > 0 else 0
                     weekly_spend = [summary_spend[cross_section][shorten_name(var)] / cross_sections_summary[cross_section]['nobs'] * i / 10 for i in range(30)]  # Average Weekly Spend
+                    weekly_media_quantity = [s / cpm * 1000 if cpm > 0 else sum(x_media[var][start:end+1]) / cross_sections_summary[cross_section]['nobs'] * i / 10 for i, s in enumerate(weekly_spend)]
                     diminishing_rate = mmm_model_output['alpha'][i][v]
                     decay_rate = mmm_model_output['decay'][i][v]
-                    cross_section_coeff = sum(model_contributions['model_contributions']['media_vars'][cross_section][var]) / sum(x_media_adstocked[var].values[start:end+1])
-                    life_time_con = [cross_section_coeff * calc_diminishing(s / cpm * 1000, diminishing_rate) / decay_rate for s in weekly_spend]
+                    cross_section_coeff = sum(model_contributions['model_contributions']['media_vars'][cross_section][var]) / sum(x_media_adstocked[var].values[start:end+1]) if sum(x_media_adstocked[var].values[start:end+1]) > 0 else 0
+                    life_time_con = [cross_section_coeff * calc_diminishing(v, diminishing_rate) / decay_rate for v in weekly_media_quantity]
                     simulated_results['ResponseCurves'][cross_section][shorten_name(var)].append({'x': weekly_spend, 'y': life_time_con})
 
         count += 1
         if (count % 100 == 0) or (count == len(sample_iterations)):
             print(' > Completed {} / {} sample iterations'.format(count, len(sample_iterations)))
+
+    for i in sample_iterations:
+        for cross_section in cross_sections_total:
+            sos_soc = simulated_results['ModelStats'][cross_section]['SOSSOC'][i] / np.mean(simulated_results['ModelStats'][cross_section]['SOSSOC'])
+            mape = simulated_results['ModelStats'][cross_section]['MAPE'][i] / np.mean(simulated_results['ModelStats'][cross_section]['MAPE'])
+            simulated_results['ModelStats'][cross_section]['MAPE_SOSSOC'].append(math.sqrt(sos_soc ** 2 + mape ** 2))
 
     return simulated_results
 
@@ -479,12 +486,7 @@ def calc_diminishing(x, alpha):
 
 def apply_diminishing(df, media_vars, transformation_params):
     df_out = pd.DataFrame(index=df.index)
-    if len(df.index[0]) == 1:
-        for media_var in media_vars:
-            media = shorten_name(media_var)
-            diminishing_rate = transformation_params[media]['diminishing_rate']
-            df_out[media_var] = [calc_diminishing(v, diminishing_rate) for v in df[media_var].values]
-    else:  # Cross Section
+    if type(df.index[0]) in [tuple, list] and len(df.index[0]) > 1:  # Panel Data
         df['CrossSection'] = [i[0] for i in df.index]
         g = df.groupby('CrossSection')
         for media_var in media_vars:
@@ -492,6 +494,11 @@ def apply_diminishing(df, media_vars, transformation_params):
             diminishing_rate = transformation_params[media]['diminishing_rate']
             temp = g.apply(lambda x: calc_diminishing(x[media_var].values, diminishing_rate))
             df_out[media_var] = [x for k, v in temp.items() for x in v]
+    else:  # Time Series
+        for media_var in media_vars:
+            media = shorten_name(media_var)
+            diminishing_rate = transformation_params[media]['diminishing_rate']
+            df_out[media_var] = [calc_diminishing(v, diminishing_rate) for v in df[media_var].values]
     return df_out
 
 
@@ -505,12 +512,7 @@ def calc_carry_over(x, carry_over_rate=0.9):
 
 def apply_carry_over(df, media_vars, transformation_params):
     df_out = pd.DataFrame(index=df.index)
-    if len(df.index[0]) == 1:
-        for media_var in media_vars:
-            media = shorten_name(media_var)
-            carry_over_rate = 1 - transformation_params[media]['decay_rate']
-            df_out[media_var] = calc_carry_over(df[media_var].values, carry_over_rate)
-    else:
+    if type(df.index[0]) in [tuple, list] and len(df.index[0]) > 1:  # Panel Data
         df['CrossSection'] = [i[0] for i in df.index]
         g = df.groupby('CrossSection')
         for media_var in media_vars:
@@ -518,6 +520,11 @@ def apply_carry_over(df, media_vars, transformation_params):
             carry_over_rate = 1 - transformation_params[media]['decay_rate']
             temp = g.apply(lambda x: calc_carry_over(x[media_var].values, carry_over_rate))
             df_out[media_var] = [x for k, v in temp.items() for x in v]
+    else:  # Time Series
+        for media_var in media_vars:
+            media = shorten_name(media_var)
+            carry_over_rate = 1 - transformation_params[media]['decay_rate']
+            df_out[media_var] = calc_carry_over(df[media_var].values, carry_over_rate)
     return df_out
 
 
@@ -530,36 +537,36 @@ def calc_mean_center(x):
 def apply_mean_center(df, cols):
     df_out = pd.DataFrame(index=df.index)
     scale = {}
-    if len(df.index[0]) == 1:
-        for col in cols:
-            df_out[col], avg = calc_mean_center(df[col].values)
-            scale[col] = {'ALL': avg}
-    else:
+    if type(df.index[0]) in [tuple, list] and len(df.index[0]) > 1:  # Panel Data
         df['CrossSection'] = [i[0] for i in df.index]
         g = df.groupby('CrossSection')
         for col in cols:
             temp = g.apply(lambda x: calc_mean_center(x[col].values))
             df_out[col] = [x for k, v in temp.items() for x in v[0]]
             scale[col] = {k: v[1] for k, v in temp.items()}
+    else:  # Time Series
+        for col in cols:
+            df_out[col], avg = calc_mean_center(df[col].values)
+            scale[col] = {'[TOTAL]': avg}
     return df_out, scale
 
 
 def apply_mean_log(df, cols):
     df_out = pd.DataFrame(index=df.index)
     scale = {}
-    if len(df.index[0]) == 1:
-        for col in cols:
-            x = df[col].values
-            x_mean, avg = calc_mean_center(x)
-            df_out[col] = np.log1p(x_mean)
-            scale[col] = {'ALL': avg}
-    else:
+    if type(df.index[0]) in [tuple, list] and len(df.index[0]) > 1:  # Panel Data
         df['CrossSection'] = [i[0] for i in df.index]
         g = df.groupby('CrossSection')
         for col in cols:
             temp = g.apply(lambda x: calc_mean_center(x[col].values))
             df_out[col] = [np.log1p(x) for k, v in temp.items() for x in v[0]]
             scale[col] = {k: v[1] for k, v in temp.items()}
+    else:  # Time Series
+        for col in cols:
+            x = df[col].values
+            x_mean, avg = calc_mean_center(x)
+            df_out[col] = np.log1p(x_mean)
+            scale[col] = {'[TOTAL]': avg}
     return df_out, scale
 
 
@@ -573,7 +580,7 @@ def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None
     tau, beta, beta_comp, beta1, beta2, beta3, transformation_params = get_model_output_parameters(mmm_model_output, selected_model_index)
     cross_sections_summary = count_obs(df_model)
     cross_sections = list(cross_sections_summary.keys())
-    cross_sections_total = cross_sections + ['[TOTAL]']
+    cross_sections_total = cross_sections + ['[TOTAL]'] if '[TOTAL]' not in cross_sections else cross_sections
 
     # Dep Var Raw
     y_raw = df[dep_var].copy()
@@ -615,16 +622,16 @@ def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None
     # Calculate predicted y
     df_contributions['predicted_' + dep_var] = df_contributions.apply(np.sum, axis=1)
     df_contributions[dep_var] = y_raw
-    if len(df_contributions.index[0]) == 1:
-        df_contributions['Date'] = df_contributions.index
-        df_lifetime_contributions['Date'] = df_lifetime_contributions.index
-    else:
+    if type(df_contributions.index[0]) in [tuple, list] and len(df_contributions.index[0]) > 1:  # Panel Data
         df_contributions['Date'] = [i[1] for i in df_contributions.index]
         df_contributions['CrossSection'] = [i[0] for i in df_contributions.index]
         df_lifetime_contributions['Date'] = [i[1] for i in df_lifetime_contributions.index]
         df_lifetime_contributions['CrossSection'] = [i[0] for i in df_lifetime_contributions.index]
-    df_contributions = df_contributions[[col for col in ['CrossSection', 'Date'] + [c for c in df_contributions.columns if c not in ['CrossSection', 'Date']]]]
-    df_lifetime_contributions = df_lifetime_contributions[[col for col in ['CrossSection', 'Date'] + [c for c in df_lifetime_contributions.columns if c not in ['CrossSection', 'Date']]]]
+    else:
+        df_contributions['Date'] = df_contributions.index
+        df_lifetime_contributions['Date'] = df_lifetime_contributions.index
+    df_contributions = df_contributions[[col for col in df_contributions.columns if col in ['CrossSection', 'Date'] + [col for col in df_contributions.columns if col not in ['CrossSection', 'Date']]]]
+    df_lifetime_contributions = df_lifetime_contributions[[col for col in df_lifetime_contributions.columns if col in ['CrossSection', 'Date'] + [col for col in df_lifetime_contributions.columns if col not in ['CrossSection', 'Date']]]]
 
     # Model Specification
     records = []
@@ -666,7 +673,7 @@ def calc_model_decomposition(df, df_model, mmm_model_output, df_media_spend=None
     model_contributions = decompose_model(mmm_model_output, df_model, df_media_spend, selected_model_index=selected_model_index, model_form=model_form, min_max_adjustment=min_max_adjustment)
     cross_sections_summary = count_obs(df_model)
     cross_sections = list(cross_sections_summary.keys())
-    cross_sections_total = cross_sections + ['[TOTAL]']
+    cross_sections_total = cross_sections + ['[TOTAL]'] if '[TOTAL]' not in cross_sections else cross_sections
 
     # Share of spend
     if num_weeks is None:
@@ -774,7 +781,7 @@ def plot_model_stats(simulated_results, x='MAPE', y='SOSSOC', metric='MAPE_SOSSO
                         size=[8 if i != selected_model_index else 16 for i in simulated_results['ModelIndex']],
                         color=colors
                     ),
-                    hovertext=['<b> Cross Section: {} </b><br><b> Model Index: {} </b><br> R2: {:,.1f} <br> MAPE: {:,.1f} <br> SOSSOC: {:,.1f}'.format(cross_section.upper(), i, data['R2'][c], data['MAPE'][c], data['SOSSOC'][c]) for c, i in enumerate(simulated_results['ModelIndex'])],
+                    hovertext=['<b> Cross Section: {} </b><br><b> Model Index: {} </b><br> R2: {:,.1f}% <br> MAPE: {:,.1f}% <br> SOSSOC: {:,.2f} <br> MAPE_SOSSOC: {:,.2f}'.format(cross_section.upper(), i, data['R2'][c], data['MAPE'][c], data['SOSSOC'][c], data['MAPE_SOSSOC'][c]) for c, i in enumerate(simulated_results['ModelIndex'])],
                 )
             )
     my_fig.update_layout(get_layout(chart_title='<b>{} vs. {}</b>'.format(y, x)))
@@ -840,11 +847,11 @@ def plot_model_output_distribution(params, selected_model_index=None, alpha=0.05
 def plot_response_curves(params, selected_model_index=None, cross_section='[TOTAL]'):
     from random import randrange
     f = plt.figure(figsize=(35, 30))
-    random_indices = [randrange(len(params[list(params.keys())[0]])) for j in range(1000)]
+    data = params[cross_section]
+    random_indices = [randrange(len(data[list(data.keys())[0]])) for j in range(300)]
     selected_model_index = -1 if selected_model_index is None else selected_model_index
     if selected_model_index >= 0:
         random_indices.append(selected_model_index)
-    data = params[cross_section]
     for i, para_name in enumerate(list(data.keys())):
         ax = f.add_subplot(7, 5, i + 1)
         for ci, curve in enumerate(data[para_name]):
@@ -873,7 +880,8 @@ def plot_model_actual_vs_predicted(df_model_contributions, mmm_model_output):
                     x=df_model_contributions['Date'],
                     y=df_model_contributions[col],
                     name=col,
-                    line=dict(color=colors[index])
+                    line=dict(color=colors[index]),
+                    hovertext='<b>' + shorten_name(col) + '</b>'
                 ))
         my_fig.update_xaxes(tickformat='%Y-%m-%d', tickangle=-90)
         my_fig.show()
@@ -900,6 +908,7 @@ def plot_model_actual_vs_predicted(df_model_contributions, mmm_model_output):
                             y=df_cross_section[col],
                             name=col,
                             line=dict(color=colors[index]),
+                            hovertext='<b>' + shorten_name(col) + '</b>',
                             legendgroup=col,
                             showlegend=True if row_index == col_index == 0 else False
                         ),
@@ -916,29 +925,50 @@ def plot_model_contributions(df_model_contributions, mmm_model_output):
 
     y_var, media_vars, comp_media_vars, positive_vars, neutral_vars, negative_vars = mmm_model_output['dep_var'], mmm_model_output['media_vars'], mmm_model_output['comp_media_vars'], mmm_model_output['positive_vars'], mmm_model_output['neutral_vars'], mmm_model_output['negative_vars']
 
-    columns_to_plot = comp_media_vars + ['intercept'] + media_vars + positive_vars + neutral_vars + negative_vars
+    columns_to_plot = ['intercept'] + media_vars + positive_vars + neutral_vars + negative_vars + comp_media_vars
     colors = ['blue', 'orange']
     contribution_colors = get_default_colors() + [get_random_color() for x in columns_to_plot]
     layout = get_layout(chart_title='<b>Model Contributions</b>')
     if 'CrossSection' not in df_model_contributions.columns:
-        my_fig = go.Figure(layout=layout)
+        pos = [0] * len(df_model_contributions)
+        neg = [0] * len(df_model_contributions)
+        for col in columns_to_plot:
+            if sum(df_model_contributions[col]) >= 0:
+                pos = pos + df_model_contributions[col]
+            else:
+                neg = neg + df_model_contributions[col]
+        y_range = [min(neg) * 1.2, max(pos) * 1.2]
+        columns_count = 1
+        my_fig = make_subplots(
+            rows=1, cols=columns_count, specs=[[{"secondary_y": True}]]
+        )
+        my_fig.update_layout(layout)
         for index, col in enumerate([y_var, 'predicted_' + y_var]):
             my_fig.add_trace(
                 go.Scatter(
                     x=df_model_contributions['Date'],
                     y=df_model_contributions[col],
                     name=col,
-                    line=dict(color=colors[index])
-                ))
+                    line=dict(color=colors[index]),
+                    hovertext='<b>' + shorten_name(col) + '</b>'
+                ),
+                row=1, col=1
+            )
         for index, col in enumerate(columns_to_plot):
             my_fig.add_trace(
                 go.Bar(
                     x=df_model_contributions['Date'],
                     y=df_model_contributions[col],
                     name=shorten_name('|'.join(col.split('|')[0:4])),
+                    hovertext='<b>' + shorten_name(col) + '</b>',
                     marker_color=contribution_colors[index],
                     opacity=1.0
-                ))
+                ),
+                row=1, col=1,
+                secondary_y=True if sum(df_model_contributions[col]) < 0 else False
+            )
+        my_fig.update_xaxes(tickformat='%Y-%m-%d', tickangle=-90)
+        my_fig.update_yaxes(range=y_range, row=1, col=1)
         my_fig.update_layout(barmode='stack')
         my_fig.show()
     else:
@@ -948,7 +978,8 @@ def plot_model_contributions(df_model_contributions, mmm_model_output):
         for row_index in range(rows_count):
             my_fig = make_subplots(
                 rows=1, cols=columns_count,
-                subplot_titles=['<b>{}</b>'.format(cross_section.upper()) for cross_section in cross_sections[(row_index * columns_count):((row_index + 1) * columns_count)]]
+                subplot_titles=['<b>{}</b>'.format(cross_section.upper()) for cross_section in cross_sections[(row_index * columns_count):((row_index + 1) * columns_count)]],
+                specs=[[{"secondary_y": True}] * columns_count]
             )
             my_fig.update_layout(layout)
             for col_index in range(columns_count):
@@ -957,6 +988,14 @@ def plot_model_contributions(df_model_contributions, mmm_model_output):
                     break
                 cross_section = cross_sections[cross_section_index]
                 df = df_model_contributions[df_model_contributions['CrossSection'] == cross_section]
+                pos = [0] * len(df)
+                neg = [0] * len(df)
+                for col in columns_to_plot:
+                    if sum(df[col]) >= 0:
+                        pos = pos + df[col]
+                    else:
+                        neg = neg + df[col]
+                y_range = [min(neg) * 1.2, max(pos) * 1.2]
                 for index, col in enumerate([y_var, 'predicted_' + y_var]):
                     my_fig.add_trace(
                         go.Scatter(
@@ -964,6 +1003,7 @@ def plot_model_contributions(df_model_contributions, mmm_model_output):
                             y=df[col],
                             name=col,
                             line=dict(color=colors[index]),
+                            hovertext='<b>' + shorten_name(col) + '</b>',
                             legendgroup=col,
                             showlegend=True if row_index == col_index == 0 else False
                         ),
@@ -976,14 +1016,17 @@ def plot_model_contributions(df_model_contributions, mmm_model_output):
                             y=df[col],
                             name=shorten_name('|'.join(col.split('|')[0:4])),
                             marker_color=contribution_colors[index],
+                            hovertext='<b>' + shorten_name(col) + '</b>',
                             opacity=1.0,
                             legendgroup=col,
                             showlegend=True if row_index == col_index == 0 else False
                         ),
-                        row=1, col=col_index + 1
+                        row=1, col=col_index + 1,
+                        secondary_y=True if sum(df[col]) < 0 else False
                     )
                 my_fig.update_xaxes(tickformat='%Y-%m-%d', tickangle=-90)
-            my_fig.update_layout(barmode='stack')
+                my_fig.update_yaxes(range=y_range, row=1, col=col_index + 1)
+                my_fig.update_layout(barmode='stack')
             my_fig.show()
 
     return my_fig
@@ -1382,11 +1425,11 @@ def export_model_output(mmm_model_output, df, df_model, model_params, selected_m
     # Media Quantity frame
     df_media_quantity = df[[col for col in df.columns if col in media_vars]].copy()
     if df_media_quantity is not None and len(df_media_quantity) > 0:
-        if len(df_media_quantity.index[0]) == 1:
-            df_media_quantity['Date'] = df_date
-        else:
+        if type(df_media_quantity.index[0]) in [tuple, list] and len(df_media_quantity.index[0]) > 1:  # Panel Data
             df_media_quantity['CrossSection'] = [i[0] for i in df_media_quantity.index]
             df_media_quantity['Date'] = [i[1] for i in df_media_quantity.index]
+        else:  # Time Series
+            df_media_quantity['Date'] = df_date
         variables_to_melt = [col for col in df_media_quantity.columns if col in media_vars]
         df_quantity_melted = pd.melt(df_media_quantity, id_vars=id_columns, value_vars=variables_to_melt)
         df_quantity_melted.columns = id_columns + ['Variable', 'Impressions']
@@ -1398,11 +1441,11 @@ def export_model_output(mmm_model_output, df, df_model, model_params, selected_m
     # Spend data frame
     df_media_spend = df[[col for col in df.columns if col in media_spend_columns]].copy()
     if df_media_spend is not None and len(df_media_spend) > 0:
-        if len(df_media_spend.index[0]) == 1:
-            df_media_spend['Date'] = df_date
-        else:
+        if type(df_media_spend.index[0]) in [tuple, list] and len(df_media_spend.index[0]) > 1:  # Panel Data
             df_media_spend['CrossSection'] = [i[0] for i in df_media_spend.index]
             df_media_spend['Date'] = [i[1] for i in df_media_spend.index]
+        else:  # Time Series
+            df_media_spend['Date'] = df_date
         variables_to_melt = [col for col in df_media_spend.columns if col in media_spend_columns]
         df_spend_melted = pd.melt(df_media_spend, id_vars=id_columns, value_vars=variables_to_melt)
         df_spend_melted.columns = id_columns + ['Variable', 'Spend']
@@ -1419,6 +1462,14 @@ def export_model_output(mmm_model_output, df, df_model, model_params, selected_m
 # -----------------------------------------------------------------------------------------
 # UTILITIES
 # -----------------------------------------------------------------------------------------
+def set_df_index(df, date_col, cross_section_col=None):
+    if df.index.name is None:
+        df[date_col] = df[date_col].astype('datetime64[ns]')
+        df = df.sort_values([date_col], ascending=[True]) if cross_section_col is None else df.sort_values([cross_section_col, date_col], ascending=[True, True])
+        df.index = df[date_col] if cross_section_col is None else df[[cross_section_col, date_col]]
+    return df
+
+
 def subset_df(df, cols):
     if len(cols) > 0:
         df_out = df[cols]
