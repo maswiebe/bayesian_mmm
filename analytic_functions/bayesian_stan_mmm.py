@@ -649,6 +649,7 @@ def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None
                 else:
                     coeff = sum(model_contributions['model_contributions']['baseline'][cross_section][var]) / sum(df[var][start:end+1])
                 records.append({
+                    'DependentVariable': dep_var,
                     'CrossSection': cross_section,
                     'Variable': var,
                     'DiminishingFunction': 'power' if var in media_vars else 'linear',
@@ -1357,7 +1358,8 @@ def get_layout(chart_title):
 # -----------------------------------------------------------------------------------------
 def calc_mape(true_y, predicted_y):
     true_y, predicted_y = np.array(true_y), np.array(predicted_y)
-    return np.mean(np.abs((true_y - predicted_y) / true_y)) * 100
+    mape = np.mean([np.abs((v - predicted_y[i]) / v) if v != 0 else 0 if predicted_y[i] == v == 0 else 1 for i, v in enumerate(true_y)]) * 100
+    return mape
 
 
 def calc_r2(true_y, predicted_y):
