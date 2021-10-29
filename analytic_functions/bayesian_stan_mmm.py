@@ -652,11 +652,13 @@ def calc_model_contributions(df, df_model, mmm_model_output, df_media_spend=None
                     'DependentVariable': dep_var,
                     'CrossSection': cross_section,
                     'Variable': var,
-                    'DiminishingFunction': 'power' if var in media_vars else 'linear',
-                    'DiminishingRate': transformation_params[shorten_name(var)]['diminishing_rate'] if var in media_vars else 1.0,
+                    'VariableType': get_variable_type(var, media_vars, comp_media_vars, positive_vars, neutral_vars, negative_vars),
+                    'CurveBase': get_curve_base(var),
+                    'Coefficient': coeff,
+                    'DiminishingFunction': 'power' if var in media_vars + comp_media_vars else 'linear',
+                    'DiminishingRate': transformation_params[shorten_name(var)]['diminishing_rate'] if var in media_vars + comp_media_vars else 1.0,
                     'DecayFunction': 'geometric',
-                    'DecayRate': transformation_params[shorten_name(var)]['decay_rate'] if var in media_vars else 1.0,
-                    'Coefficient': coeff
+                    'DecayRate': transformation_params[shorten_name(var)]['decay_rate'] if var in media_vars + comp_media_vars else 1.0
                 })
     df_model_specifications = pd.DataFrame(records)
 
@@ -1097,7 +1099,7 @@ def plot_model_decomposition(df_model_contributions, mmm_model_output, media_onl
                     ),
                     row=1, col=col_index + 1
                 )
-                my_fig.update_xaxes(tickangle=0)
+                # my_fig.update_xaxes(tickangle=-90)
                 my_fig.update_yaxes(tickformat=',.0f')
             my_fig.show()
 
@@ -1153,7 +1155,7 @@ def plot_waterfall(dict_decomposition, cross_sections=None):
                 ),
                 row=1, col=col_index + 1
             )
-            my_fig.update_xaxes(tickangle=0)
+            # my_fig.update_xaxes(tickangle=-90)
             my_fig.update_yaxes(tickformat=',.0f')
         my_fig.show()
 
@@ -1209,7 +1211,7 @@ def plot_share_of_spend_vs_contributions(dict_decomposition, cross_sections=None
                 ),
                 row=1, col=col_index + 1
             )
-            my_fig.update_xaxes(tickangle=0)
+            # my_fig.update_xaxes(tickangle=-90)
             my_fig.update_yaxes(tickformat=',.0%')
         my_fig.show()
 
@@ -1271,7 +1273,7 @@ def plot_contributions_vs_roas(dict_decomposition, cross_sections=None):
                 secondary_y=True,
                 row=1, col=col_index + 1
             )
-            my_fig.update_xaxes(tickangle=0)
+            # my_fig.update_xaxes(tickangle=-90)
             my_fig.update_yaxes(tickformat=',.0f')
         my_fig.show()
 
@@ -1333,7 +1335,7 @@ def plot_spend_vs_roas(dict_decomposition, cross_sections=None):
                 secondary_y=True,
                 row=1, col=col_index + 1
             )
-            my_fig.update_xaxes(tickangle=0)
+            # my_fig.update_xaxes(tickangle=-90)
             my_fig.update_yaxes(tickformat=',.0f')
         my_fig.show()
 
@@ -1409,14 +1411,14 @@ def export_model_output(mmm_model_output, df, df_model, model_params, selected_m
 
     # Model Contributions
     id_columns = ['Date'] if 'CrossSection' not in df_contributions.columns else ['CrossSection', 'Date']
-    variables_to_melt = media_vars + comp_media_vars + positive_vars + neutral_vars + negative_vars
+    variables_to_melt = media_vars + comp_media_vars + positive_vars + neutral_vars + negative_vars + ['intercept']
     df_con_melted = pd.melt(df_contributions, id_vars=id_columns, value_vars=variables_to_melt)
     df_con_melted.columns = id_columns + ['Variable', 'ModelContribution']
     df_con_melted['Channel'] = df_con_melted['Variable'].apply(lambda r: shorten_name(r))
 
     # LifeTime Contributions
     if df_lifetime_contributions is not None and len(df_lifetime_contributions) > 0:
-        variables_to_melt = media_vars + comp_media_vars + positive_vars + neutral_vars + negative_vars
+        variables_to_melt = media_vars + comp_media_vars + positive_vars + neutral_vars + negative_vars + ['intercept']
         df_lifetime_con_melted = pd.melt(df_lifetime_contributions, id_vars=id_columns, value_vars=variables_to_melt)
         df_lifetime_con_melted.columns = id_columns + ['Variable', 'LifeTimeContribution']
         df_lifetime_con_melted['Channel'] = df_lifetime_con_melted['Variable'].apply(lambda r: shorten_name(r))
@@ -1509,6 +1511,36 @@ def shorten_name(col):
     return col
 
 
+def get_curve_base(col):
+    if any(x in str(col).lower() for x in ['impressions', 'impression', 'imp', 'imps']):
+        curve_base = 'Impressions'
+    elif any(x in str(col).lower() for x in ['grp', 'grps']):
+        curve_base = 'GRPs'
+    elif any(x in str(col).lower() for x in ['click', 'clicks']):
+        curve_base = 'Clicks'
+    elif any(x in str(col).lower() for x in ['view', 'views']):
+        curve_base = 'Views'
+    elif any(x in str(col).lower() for x in ['insertion', 'insertions', 'insert', 'inserts']):
+        curve_base = 'Insertions'
+    elif any(x in str(col).lower() for x in ['spend']):
+        curve_base = 'Media Spend'
+    else:
+        curve_base = 'N/A'
+    return curve_base
+
+
+def get_variable_type(var, media_vars, comp_media_vars, positive_vars, neutral_vars, negative_vars):
+    if var in media_vars:
+        var_type = 'Media'
+    elif var in comp_media_vars:
+        var_type = 'Competitive Media'
+    elif var in positive_vars + neutral_vars + negative_vars:
+        var_type = 'Control'
+    else:
+        var_type = var
+    return var_type
+
+
 def write_worksheet(df, sheet_name, writer, freeze_panes=(1, 10), zoom_level=90):
     if df is not None:
         print(' - Writing {} sheet data. {} Rows & {} columns'.format(sheet_name, len(df), len(df.columns)))
@@ -1554,6 +1586,16 @@ def write_excel(data, file_name):
             output_sheet.write(0, col_num, col_name, header_format)
 
     writer.save()
+
+
+def write_csv(data, file_path, date_stamp=None):
+
+    if not file_path.strip().endswith('/'):
+        file_path = file_path.strip() + '/'
+    if date_stamp is None:
+        date_stamp = datetime.now().strftime("%Y%m%d")
+    for k, df_data in data.items():
+        df_data.to_csv(file_path + date_stamp + '_' + k + '.csv', index=False)
 
 
 def round_up(n, decimals=0):
